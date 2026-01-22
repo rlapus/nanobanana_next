@@ -4,8 +4,11 @@ export const runtime = "nodejs";
 
 type Mode = "text" | "image";
 
-const MODEL = "gemini-2.5-flash-image";
-const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`;
+const DEFAULT_MODEL = "gemini-2.5-flash-image";
+const ALLOWED_MODELS = new Set([
+  "gemini-2.5-flash-image",
+  "gemini-3-pro-image",
+]);
 
 async function toBase64FromUrl(url: string) {
   const response = await fetch(url);
@@ -56,6 +59,7 @@ export async function POST(request: Request) {
     let imageUrl = "";
     let imageFile: File | null = null;
     let mode: Mode = "text";
+    let model = DEFAULT_MODEL;
 
     if (contentType.includes("application/json")) {
       const body = (await request.json()) as {
@@ -66,11 +70,18 @@ export async function POST(request: Request) {
       prompt = body.prompt?.trim() ?? "";
       imageUrl = body.imageUrl?.trim() ?? "";
       mode = body.mode === "image" ? "image" : "text";
+      if (body.model && ALLOWED_MODELS.has(body.model)) {
+        model = body.model;
+      }
     } else {
       const formData = await request.formData();
       prompt = String(formData.get("prompt") || "").trim();
       imageUrl = String(formData.get("imageUrl") || "").trim();
       mode = formData.get("mode") === "image" ? "image" : "text";
+      const selectedModel = String(formData.get("model") || "").trim();
+      if (ALLOWED_MODELS.has(selectedModel)) {
+        model = selectedModel;
+      }
       const file = formData.get("imageFile");
       if (file instanceof File && file.size > 0) {
         imageFile = file;
@@ -108,7 +119,9 @@ export async function POST(request: Request) {
       });
     }
 
-    const response = await fetch(API_URL, {
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
+      {
       method: "POST",
       headers: {
         "x-goog-api-key": apiKey,
@@ -120,7 +133,8 @@ export async function POST(request: Request) {
           responseModalities: ["IMAGE"],
         },
       }),
-    });
+      }
+    );
 
     const payload = (await response.json()) as {
       candidates?: Array<{
@@ -143,8 +157,14 @@ export async function POST(request: Request) {
     const textPart = partsOut.find((part) => typeof part.text === "string");
 
     if (!image) {
+      const fallbackText =
+        typeof textPart?.text === "string" ? textPart.text : null;
       return NextResponse.json(
-        { error: "No image returned from the API." },
+        {
+          error: "No image returned from the API.",
+          details: fallbackText || "The model returned no image data.",
+          model,
+        },
         { status: 502 }
       );
     }
