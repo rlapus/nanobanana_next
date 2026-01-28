@@ -5,17 +5,18 @@ import { useEffect, useMemo, useState } from "react";
 
 type Mode = "text" | "image";
 type Model = "gemini-2.5-flash-image" | "gemini-3-pro-image";
+type Provider = "gemini" | "openai" | "openrouter";
 
 
 export default function Home() {
   const [prompt, setPrompt] = useState("");
   const [mode, setMode] = useState<Mode>("text");
+  const [provider, setProvider] = useState<Provider>("openrouter");
   const [model, setModel] = useState<Model>("gemini-2.5-flash-image");
-  const [models, setModels] = useState<Model[]>([
+  const [models] = useState<Model[]>([
     "gemini-2.5-flash-image",
     "gemini-3-pro-image",
   ]);
-  const [modelError, setModelError] = useState<string | null>(null);
   const [imageUrl, setImageUrl] = useState("");
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [filePreviewUrl, setFilePreviewUrl] = useState<string | null>(null);
@@ -27,6 +28,17 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [theme, setTheme] = useState<"light" | "dark">("dark");
   const [compareValue, setCompareValue] = useState(100);
+  const [moderation, setModeration] = useState<"auto" | "low">("low");
+  const [openrouterModel, setOpenrouterModel] = useState(
+    "google/gemini-2.5-flash-image"
+  );
+  const [openrouterAspectRatio, setOpenrouterAspectRatio] = useState<
+    string | null
+  >(null);
+  const [openrouterImageSize, setOpenrouterImageSize] = useState("2K");
+  const [sourceAspectRatio, setSourceAspectRatio] = useState<number | null>(
+    null
+  );
 
   const canSubmit = useMemo(() => {
     if (!prompt.trim()) return false;
@@ -61,32 +73,61 @@ export default function Home() {
   }, [imageFile]);
 
   useEffect(() => {
-    const loadModels = async () => {
-      try {
-        const response = await fetch("/api/models");
-        const payload = await response.json();
-        if (!response.ok) {
-          throw new Error(payload?.error || "Unable to load models.");
-        }
-        const available = Array.isArray(payload?.models)
-          ? (payload.models as Model[])
-          : [];
-        if (available.length > 0) {
-          const merged = Array.from(new Set([...models, ...available]));
-          setModels(merged);
-          setModel((current) =>
-            merged.includes(current) ? current : merged[0]
-          );
-        }
-      } catch (err) {
-        const message =
-          err instanceof Error ? err.message : "Unable to load models.";
-        setModelError(message);
-      }
+    const src = imageUrl.trim() || filePreviewUrl;
+    if (!src) {
+      setOpenrouterAspectRatio(null);
+      return;
+    }
+
+    const supportedRatios = [
+      "1:1",
+      "2:3",
+      "3:2",
+      "3:4",
+      "4:3",
+      "4:5",
+      "5:4",
+      "9:16",
+      "16:9",
+      "21:9",
+    ];
+
+    const parseRatio = (ratio: string) => {
+      const [w, h] = ratio.split(":").map(Number);
+      return w / h;
     };
 
-    loadModels();
-  }, []);
+    const targetRatios = supportedRatios.map((ratio) => ({
+      ratio,
+      value: parseRatio(ratio),
+    }));
+
+    const img = new Image();
+    img.onload = () => {
+      if (!img.naturalWidth || !img.naturalHeight) {
+        setOpenrouterAspectRatio(null);
+        setSourceAspectRatio(null);
+        return;
+      }
+      const actual = img.naturalWidth / img.naturalHeight;
+      setSourceAspectRatio(actual);
+      let best = targetRatios[0];
+      let bestDiff = Math.abs(actual - best.value);
+      for (const candidate of targetRatios.slice(1)) {
+        const diff = Math.abs(actual - candidate.value);
+        if (diff < bestDiff) {
+          best = candidate;
+          bestDiff = diff;
+        }
+      }
+      setOpenrouterAspectRatio(best.ratio);
+    };
+    img.onerror = () => {
+      setOpenrouterAspectRatio(null);
+      setSourceAspectRatio(null);
+    };
+    img.src = src;
+  }, [imageUrl, filePreviewUrl]);
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -101,10 +142,25 @@ export default function Home() {
       const formData = new FormData();
       formData.append("prompt", prompt.trim());
       formData.append("mode", mode);
+      formData.append("provider", provider);
       if (imageUrl.trim()) {
         formData.append("imageUrl", imageUrl.trim());
       }
-      formData.append("model", model);
+      if (provider === "gemini") {
+        formData.append("model", model);
+      }
+      if (provider === "openai") {
+        formData.append("moderation", moderation);
+      }
+      if (provider === "openrouter") {
+        formData.append("openrouterModel", openrouterModel);
+        if (openrouterAspectRatio) {
+          formData.append("openrouterAspectRatio", openrouterAspectRatio);
+        }
+        if (openrouterImageSize) {
+          formData.append("openrouterImageSize", openrouterImageSize);
+        }
+      }
       if (imageFile) {
         formData.append("imageFile", imageFile);
       }
@@ -116,9 +172,29 @@ export default function Home() {
 
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
-        const detail =
-          typeof payload?.details === "string" ? ` ${payload.details}` : "";
-        throw new Error((payload?.error || "Failed to generate image.") + detail);
+        const rawError = payload?.error;
+        const errorText =
+          typeof rawError === "string"
+            ? rawError
+            : rawError
+            ? JSON.stringify(rawError)
+            : "Failed to generate image.";
+        const rawDetails = payload?.details;
+        const detailText =
+          typeof rawDetails === "string"
+            ? rawDetails
+            : rawDetails
+            ? JSON.stringify(rawDetails)
+            : "";
+        const rawDebug = payload?.debug;
+        const debugText =
+          typeof rawDebug === "string"
+            ? rawDebug
+            : rawDebug
+            ? JSON.stringify(rawDebug)
+            : "";
+        const messageParts = [errorText, detailText, debugText].filter(Boolean);
+        throw new Error(messageParts.join(" "));
       }
 
       setResultImage(payload.image ?? null);
@@ -260,6 +336,31 @@ export default function Home() {
                 </div>
               )}
 
+            <div className="row">
+              <label className="label" htmlFor="provider">
+                Provider
+              </label>
+              <select
+                id="provider"
+                className="select"
+                value={provider}
+                onChange={(event) =>
+                  setProvider(event.target.value as Provider)
+                }
+              >
+                <option value="gemini">Gemini Nano Banana</option>
+                <option value="openai">OpenAI GPT Image 1.5</option>
+                <option value="openrouter">OpenRouter</option>
+              </select>
+              {provider === "openai" && (
+                <span className="hint">Requires OPENAI_API_KEY.</span>
+              )}
+              {provider === "openrouter" && (
+                <span className="hint">Requires OPENROUTER_API_KEY.</span>
+              )}
+            </div>
+
+            {provider === "gemini" && (
               <div className="row">
                 <label className="label" htmlFor="model">
                   Model
@@ -276,8 +377,67 @@ export default function Home() {
                     </option>
                   ))}
                 </select>
-                {modelError && <span className="hint">{modelError}</span>}
               </div>
+            )}
+
+            {provider === "openai" && (
+              <div className="row">
+                <label className="label" htmlFor="moderation">
+                  Moderation
+                </label>
+                <select
+                  id="moderation"
+                  className="select"
+                  value={moderation}
+                  onChange={(event) =>
+                    setModeration(event.target.value as "auto" | "low")
+                  }
+                >
+                  <option value="auto">Auto (default)</option>
+                  <option value="low">Low</option>
+                </select>
+              </div>
+            )}
+
+            {provider === "openrouter" && (
+              <div className="row">
+                <label className="label" htmlFor="openrouterModel">
+                  OpenRouter model
+                </label>
+                <select
+                  id="openrouterModel"
+                  className="select"
+                  value={openrouterModel}
+                  onChange={(event) => setOpenrouterModel(event.target.value)}
+                >
+                  <option value="google/gemini-2.5-flash-image">
+                    google/gemini-2.5-flash-image (Nano Banana)
+                  </option>
+                  <option value="bytedance-seed/seedream-4.5">
+                    bytedance-seed/seedream-4.5
+                  </option>
+                </select>
+              </div>
+            )}
+
+            {provider === "openrouter" && /gemini/i.test(openrouterModel) && (
+              <div className="row">
+                <label className="label" htmlFor="openrouterImageSize">
+                  Output size (Gemini)
+                </label>
+                <select
+                  id="openrouterImageSize"
+                  className="select"
+                  value={openrouterImageSize}
+                  onChange={(event) => setOpenrouterImageSize(event.target.value)}
+                >
+                  <option value="1K">1K (default)</option>
+                  <option value="2K">2K</option>
+                  <option value="4K">4K</option>
+                </select>
+                <span className="hint">Higher sizes cost more and take longer.</span>
+              </div>
+            )}
 
               <div className="buttons">
                 <button className="btn" type="submit" disabled={!canSubmit}>
@@ -329,10 +489,18 @@ export default function Home() {
               {error && <div className="error">{error}</div>}
               {resultText && <p className="status">{resultText}</p>}
               {mode === "image" &&
+              provider === "gemini" &&
               (filePreviewUrl || imageUrl.trim()) &&
               resultImage ? (
                 <div className="compare">
-                  <div className="compareFrame">
+                  <div
+                    className="compareFrame"
+                    style={
+                      sourceAspectRatio
+                        ? { aspectRatio: String(sourceAspectRatio) }
+                        : undefined
+                    }
+                  >
                     <img
                       src={imageUrl.trim() || filePreviewUrl || ""}
                       alt="Source reference"
