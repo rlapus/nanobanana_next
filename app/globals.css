@@ -198,6 +198,58 @@ pre {
   color: var(--muted);
 }
 
+.cropPanel {
+  display: grid;
+  gap: 12px;
+}
+
+.cropPreview {
+  position: relative;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  background: #000;
+  aspect-ratio: 1 / 1;
+  cursor: grab;
+  touch-action: none;
+}
+
+.cropPreview:active {
+  cursor: grabbing;
+}
+
+.cropImage {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  display: block;
+  object-fit: cover;
+  user-select: none;
+  pointer-events: none;
+}
+
+.cropControls {
+  display: grid;
+  gap: 8px;
+}
+
+.range {
+  width: 100%;
+}
+
+.posePreview {
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  background: #fff;
+}
+
+.posePreview img {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
 .label {
   font-size: 0.9rem;
   text-transform: uppercase;
@@ -350,6 +402,7 @@ pre {
   height: 100%;
   display: block;
   object-fit: contain;
+  cursor: zoom-in;
 }
 
 .compareFrame img:nth-child(2) {
@@ -406,6 +459,7 @@ pre {
   width: 100%;
   height: auto;
   display: block;
+  cursor: zoom-in;
 }
 
 .status {
@@ -529,6 +583,15 @@ pre {
 
 [data-theme="dark"] .imageGroup {
   background: rgba(15, 21, 26, 0.85);
+  border-color: rgba(241, 236, 228, 0.18);
+}
+
+[data-theme="dark"] .cropPreview {
+  border-color: rgba(241, 236, 228, 0.18);
+}
+
+[data-theme="dark"] .posePreview {
+  background: #0f151a;
   border-color: rgba(241, 236, 228, 0.18);
 }
 

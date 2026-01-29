@@ -371,6 +371,11 @@ export async function POST(request: Request) {
         headers["X-Title"] = process.env.OPENROUTER_TITLE;
       }
 
+      const selectedModel =
+        openrouterModel ||
+        process.env.OPENROUTER_IMAGE_MODEL ||
+        "bytedance-seed/seedream-4.5";
+
       const content: Array<Record<string, unknown>> = [
         { type: "text", text: prompt },
       ];
@@ -388,7 +393,7 @@ export async function POST(request: Request) {
           openrouterPoseImageUrl
         );
         const poseHint = poseUrl
-          ? "Image 1 is the source identity and appearance. Image 2 is the pose reference only. Preserve the face from image 1. Use pose, body position, and camera angle from image 2. Do not copy the style from image 2."
+          ? "Image 1 is the source identity and appearance. Image 2 is the pose reference only. Copy only the body pose and camera angle from image 2. Do not copy style, lighting, background, clothing, colors, textures, props, or any text from image 2. Preserve the face from image 1."
           : "";
         if (poseHint) {
           content[0] = {
@@ -403,10 +408,6 @@ export async function POST(request: Request) {
         }
       }
 
-      const selectedModel =
-        openrouterModel ||
-        process.env.OPENROUTER_IMAGE_MODEL ||
-        "bytedance-seed/seedream-4.5";
       const useGeminiImageConfig =
         (openrouterAspectRatio || openrouterImageSize) &&
         /gemini/i.test(selectedModel);

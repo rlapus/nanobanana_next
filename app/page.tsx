@@ -1,7 +1,7 @@
 "use client";
 
-import type { FormEvent } from "react";
-import { useEffect, useMemo, useState } from "react";
+import type { FormEvent, PointerEvent } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 type Mode = "text" | "image";
 type Model = "gemini-2.5-flash-image" | "gemini-3-pro-image";
@@ -23,6 +23,31 @@ export default function Home() {
   const [poseImageUrl, setPoseImageUrl] = useState("");
   const [poseImageFile, setPoseImageFile] = useState<File | null>(null);
   const [posePreviewUrl, setPosePreviewUrl] = useState<string | null>(null);
+  const [cropZoom, setCropZoom] = useState(1);
+  const [cropOffsetX, setCropOffsetX] = useState(0);
+  const [cropOffsetY, setCropOffsetY] = useState(0);
+  const [croppedSourcePreview, setCroppedSourcePreview] = useState<
+    string | null
+  >(null);
+  const [sourceNatural, setSourceNatural] = useState<{
+    width: number;
+    height: number;
+  } | null>(null);
+  const [cropPreviewSize, setCropPreviewSize] = useState(0);
+  const cropPreviewRef = useRef<HTMLDivElement | null>(null);
+  const dragStateRef = useRef<{
+    active: boolean;
+    startX: number;
+    startY: number;
+    startOffsetX: number;
+    startOffsetY: number;
+  }>({
+    active: false,
+    startX: 0,
+    startY: 0,
+    startOffsetX: 0,
+    startOffsetY: 0,
+  });
   const [resultImage, setResultImage] = useState<string | null>(null);
   const [resultText, setResultText] = useState<string | null>(null);
   const [status, setStatus] = useState<"idle" | "loading" | "done" | "error">(
@@ -43,11 +68,141 @@ export default function Home() {
     null
   );
 
+  const seedreamCropEnabled =
+    provider === "openrouter" &&
+    /seedream/i.test(openrouterModel) &&
+    mode === "image";
+
   const canSubmit = useMemo(() => {
     if (!prompt.trim()) return false;
     if (mode === "text") return true;
     return Boolean(imageFile) || Boolean(imageUrl.trim());
   }, [prompt, mode, imageFile, imageUrl]);
+
+  const createCroppedSquareBlob = async () => {
+    const src = imageUrl.trim() || filePreviewUrl;
+    if (!src) return null;
+
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const element = new Image();
+      element.crossOrigin = "anonymous";
+      element.onload = () => resolve(element);
+      element.onerror = () => reject(new Error("Failed to load source image."));
+      element.src = src;
+    });
+
+    const size = 1024;
+    const scale = Math.max(size / img.naturalWidth, size / img.naturalHeight);
+    const zoomedScale = scale * cropZoom;
+    const drawW = img.naturalWidth * zoomedScale;
+    const drawH = img.naturalHeight * zoomedScale;
+    const baseX = (size - drawW) / 2;
+    const baseY = (size - drawH) / 2;
+    const maxOffsetX = Math.max(0, (drawW - size) / 2);
+    const maxOffsetY = Math.max(0, (drawH - size) / 2);
+    const drawX = baseX - cropOffsetX * maxOffsetX;
+    const drawY = baseY - cropOffsetY * maxOffsetY;
+
+    const canvas = document.createElement("canvas");
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+    ctx.fillStyle = "#000";
+    ctx.fillRect(0, 0, size, size);
+    ctx.drawImage(img, drawX, drawY, drawW, drawH);
+
+    const blob = await new Promise<Blob | null>((resolve) =>
+      canvas.toBlob((value) => resolve(value), "image/png")
+    );
+    return blob;
+  };
+
+  const getCropMetrics = () => {
+    const previewSize =
+      cropPreviewSize ||
+      (cropPreviewRef.current
+        ? Math.min(
+            cropPreviewRef.current.clientWidth,
+            cropPreviewRef.current.clientHeight
+          )
+        : 0);
+    if (!sourceNatural || !previewSize) {
+      return {
+        maxOffsetX: 0,
+        maxOffsetY: 0,
+        imageWidth: 0,
+        imageHeight: 0,
+      };
+    }
+    const baseScale = Math.max(
+      previewSize / sourceNatural.width,
+      previewSize / sourceNatural.height
+    );
+    const scale = baseScale * cropZoom;
+    const imageWidth = sourceNatural.width * scale;
+    const imageHeight = sourceNatural.height * scale;
+    const maxOffsetX = Math.max(0, (imageWidth - previewSize) / 2);
+    const maxOffsetY = Math.max(0, (imageHeight - previewSize) / 2);
+    return { maxOffsetX, maxOffsetY, imageWidth, imageHeight };
+  };
+
+  const handleCropPointerDown = (
+    event: PointerEvent<HTMLDivElement>
+  ) => {
+    if (!seedreamCropEnabled) return;
+    event.preventDefault();
+    const target = event.currentTarget;
+    target.setPointerCapture(event.pointerId);
+    dragStateRef.current = {
+      active: true,
+      startX: event.clientX,
+      startY: event.clientY,
+      startOffsetX: cropOffsetX,
+      startOffsetY: cropOffsetY,
+    };
+  };
+
+  const handleCropPointerMove = (
+    event: PointerEvent<HTMLDivElement>
+  ) => {
+    if (!dragStateRef.current.active) return;
+    const { maxOffsetX, maxOffsetY } = getCropMetrics();
+    const dx = event.clientX - dragStateRef.current.startX;
+    const dy = event.clientY - dragStateRef.current.startY;
+    const nextOffsetX =
+      maxOffsetX === 0
+        ? 0
+        : dragStateRef.current.startOffsetX - dx / maxOffsetX;
+    const nextOffsetY =
+      maxOffsetY === 0
+        ? 0
+        : dragStateRef.current.startOffsetY - dy / maxOffsetY;
+    setCropOffsetX(Math.max(-1, Math.min(1, nextOffsetX)));
+    setCropOffsetY(Math.max(-1, Math.min(1, nextOffsetY)));
+  };
+
+  const handleCropPointerUp = (
+    event: PointerEvent<HTMLDivElement>
+  ) => {
+    if (!dragStateRef.current.active) return;
+    dragStateRef.current.active = false;
+    event.currentTarget.releasePointerCapture(event.pointerId);
+  };
+
+  const {
+    imageWidth: cropImageWidth,
+    imageHeight: cropImageHeight,
+    maxOffsetX,
+    maxOffsetY,
+  } = getCropMetrics();
+  const cropTranslateX = -maxOffsetX * cropOffsetX;
+  const cropTranslateY = -maxOffsetY * cropOffsetY;
+  const cropImageStyle = {
+    width: cropImageWidth || "100%",
+    height: cropImageHeight || "100%",
+    transform: `translate(calc(-50% + ${cropTranslateX}px), calc(-50% + ${cropTranslateY}px))`,
+  };
 
   useEffect(() => {
     const stored =
@@ -76,6 +231,53 @@ export default function Home() {
   }, [imageFile]);
 
   useEffect(() => {
+    setCropZoom(1);
+    setCropOffsetX(0);
+    setCropOffsetY(0);
+  }, [imageUrl, imageFile]);
+
+  useEffect(() => {
+    const src = imageUrl.trim() || filePreviewUrl;
+    if (!src) {
+      setSourceNatural(null);
+      return;
+    }
+    let cancelled = false;
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = () => {
+      if (cancelled) return;
+      setSourceNatural({ width: img.naturalWidth, height: img.naturalHeight });
+    };
+    img.onerror = () => {
+      if (!cancelled) setSourceNatural(null);
+    };
+    img.src = src;
+    return () => {
+      cancelled = true;
+    };
+  }, [imageUrl, filePreviewUrl]);
+
+  useEffect(() => {
+    if (!cropPreviewRef.current) return;
+    const element = cropPreviewRef.current;
+    const updateSize = () => {
+      const rect = element.getBoundingClientRect();
+      const size = Math.min(rect.width, rect.height);
+      if (size) setCropPreviewSize(size);
+    };
+    updateSize();
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (!entry) return;
+      const size = Math.min(entry.contentRect.width, entry.contentRect.height);
+      if (size) setCropPreviewSize(size);
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [seedreamCropEnabled]);
+
+  useEffect(() => {
     if (!poseImageFile) {
       setPosePreviewUrl(null);
       return;
@@ -84,6 +286,65 @@ export default function Home() {
     setPosePreviewUrl(objectUrl);
     return () => URL.revokeObjectURL(objectUrl);
   }, [poseImageFile]);
+
+  useEffect(() => {
+    if (!seedreamCropEnabled) {
+      setCroppedSourcePreview(null);
+      return;
+    }
+    const src = imageUrl.trim() || filePreviewUrl;
+    if (!src) {
+      setCroppedSourcePreview(null);
+      return;
+    }
+    let cancelled = false;
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = () => {
+      if (cancelled) return;
+      const size = 512;
+      const scale = Math.max(size / img.naturalWidth, size / img.naturalHeight);
+      const zoomedScale = scale * cropZoom;
+      const drawW = img.naturalWidth * zoomedScale;
+      const drawH = img.naturalHeight * zoomedScale;
+      const baseX = (size - drawW) / 2;
+      const baseY = (size - drawH) / 2;
+      const maxOffsetX = Math.max(0, (drawW - size) / 2);
+      const maxOffsetY = Math.max(0, (drawH - size) / 2);
+      const drawX = baseX - cropOffsetX * maxOffsetX;
+      const drawY = baseY - cropOffsetY * maxOffsetY;
+      const canvas = document.createElement("canvas");
+      canvas.width = size;
+      canvas.height = size;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) {
+        setCroppedSourcePreview(null);
+        return;
+      }
+      ctx.fillStyle = "#000";
+      ctx.fillRect(0, 0, size, size);
+      ctx.drawImage(img, drawX, drawY, drawW, drawH);
+      try {
+        setCroppedSourcePreview(canvas.toDataURL("image/png"));
+      } catch {
+        setCroppedSourcePreview(null);
+      }
+    };
+    img.onerror = () => {
+      if (!cancelled) setCroppedSourcePreview(null);
+    };
+    img.src = src;
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    seedreamCropEnabled,
+    imageUrl,
+    filePreviewUrl,
+    cropZoom,
+    cropOffsetX,
+    cropOffsetY,
+  ]);
 
   useEffect(() => {
     const src = imageUrl.trim() || filePreviewUrl;
@@ -156,9 +417,8 @@ export default function Home() {
       formData.append("prompt", prompt.trim());
       formData.append("mode", mode);
       formData.append("provider", provider);
-      if (imageUrl.trim()) {
-        formData.append("imageUrl", imageUrl.trim());
-      }
+      let submitImageUrl = imageUrl.trim();
+      let submitImageFile = imageFile;
       if (provider === "gemini") {
         formData.append("model", model);
       }
@@ -174,8 +434,24 @@ export default function Home() {
           formData.append("openrouterImageSize", openrouterImageSize);
         }
       }
-      if (imageFile) {
-        formData.append("imageFile", imageFile);
+      if (seedreamCropEnabled && mode === "image") {
+        const croppedBlob = await createCroppedSquareBlob();
+        if (!croppedBlob) {
+          throw new Error(
+            "Unable to crop the source image. Try uploading the file instead of using a URL."
+          );
+        }
+        submitImageUrl = "";
+        submitImageFile = new File([croppedBlob], "source-square.png", {
+          type: "image/png",
+        });
+      }
+
+      if (submitImageUrl) {
+        formData.append("imageUrl", submitImageUrl);
+      }
+      if (submitImageFile) {
+        formData.append("imageFile", submitImageFile);
       }
       if (provider === "openrouter") {
         if (poseImageUrl.trim()) {
@@ -356,6 +632,47 @@ export default function Home() {
                           (imageUrl.trim() ? "URL provided" : "No image yet")}
                       </span>
                     </div>
+                    {seedreamCropEnabled &&
+                      (imageUrl.trim() || filePreviewUrl) && (
+                        <div className="cropPanel">
+                          <div
+                            className="cropPreview"
+                            ref={cropPreviewRef}
+                            onPointerDown={handleCropPointerDown}
+                            onPointerMove={handleCropPointerMove}
+                            onPointerUp={handleCropPointerUp}
+                            onPointerLeave={handleCropPointerUp}
+                          >
+                            <img
+                              className="cropImage"
+                              src={imageUrl.trim() || filePreviewUrl || ""}
+                              alt="Cropped preview"
+                              style={cropImageStyle}
+                              draggable={false}
+                            />
+                          </div>
+                          <div className="cropControls">
+                            <label className="label" htmlFor="cropZoom">
+                              Crop zoom
+                            </label>
+                            <input
+                              id="cropZoom"
+                              className="range"
+                              type="range"
+                              min={1}
+                              max={3}
+                              step={0.01}
+                              value={cropZoom}
+                              onChange={(event) =>
+                                setCropZoom(Number(event.target.value))
+                              }
+                            />
+                            <span className="hint">
+                              Drag the image to position the square crop.
+                            </span>
+                          </div>
+                        </div>
+                      )}
                   </div>
 
                   {provider === "openrouter" && (
@@ -399,6 +716,18 @@ export default function Home() {
                               : "No pose image yet")}
                         </span>
                       </div>
+                      {(poseImageUrl.trim() || posePreviewUrl) && (
+                        <div className="posePreview">
+                          <img
+                            src={
+                              poseImageUrl.trim() ||
+                              posePreviewUrl ||
+                              ""
+                            }
+                            alt="Pose reference preview"
+                          />
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -520,6 +849,10 @@ export default function Home() {
                     setImageFile(null);
                     setPoseImageUrl("");
                     setPoseImageFile(null);
+                    setCropZoom(1);
+                    setCropOffsetX(0);
+                    setCropOffsetY(0);
+                    setCroppedSourcePreview(null);
                     setResultImage(null);
                     setResultText(null);
                     setStatus("idle");
@@ -544,7 +877,12 @@ export default function Home() {
                     <p className="status">Source image</p>
                     <div className="imageShell">
                       <img
-                        src={imageUrl.trim() || filePreviewUrl || ""}
+                        src={
+                          (seedreamCropEnabled && croppedSourcePreview) ||
+                          imageUrl.trim() ||
+                          filePreviewUrl ||
+                          ""
+                        }
                         alt="Source reference"
                       />
                       {status === "loading" && (
@@ -581,6 +919,7 @@ export default function Home() {
                       style={{
                         clipPath: `inset(0 ${100 - compareValue}% 0 0)`,
                       }}
+                      onClick={() => window.open(resultImage, "_blank")}
                     />
                     {status === "loading" && (
                       <div className="loadingOverlay" aria-live="polite">
@@ -607,7 +946,11 @@ export default function Home() {
                 </div>
               ) : resultImage ? (
                 <div className="imageFrame">
-                  <img src={resultImage} alt="Generated result" />
+                  <img
+                    src={resultImage}
+                    alt="Generated result"
+                    onClick={() => window.open(resultImage, "_blank")}
+                  />
                 </div>
               ) : null}
             </div>
