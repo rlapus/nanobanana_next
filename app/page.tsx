@@ -20,6 +20,9 @@ export default function Home() {
   const [imageUrl, setImageUrl] = useState("");
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [filePreviewUrl, setFilePreviewUrl] = useState<string | null>(null);
+  const [poseImageUrl, setPoseImageUrl] = useState("");
+  const [poseImageFile, setPoseImageFile] = useState<File | null>(null);
+  const [posePreviewUrl, setPosePreviewUrl] = useState<string | null>(null);
   const [resultImage, setResultImage] = useState<string | null>(null);
   const [resultText, setResultText] = useState<string | null>(null);
   const [status, setStatus] = useState<"idle" | "loading" | "done" | "error">(
@@ -30,7 +33,7 @@ export default function Home() {
   const [compareValue, setCompareValue] = useState(100);
   const [moderation, setModeration] = useState<"auto" | "low">("low");
   const [openrouterModel, setOpenrouterModel] = useState(
-    "google/gemini-2.5-flash-image"
+    "bytedance-seed/seedream-4.5"
   );
   const [openrouterAspectRatio, setOpenrouterAspectRatio] = useState<
     string | null
@@ -71,6 +74,16 @@ export default function Home() {
     setFilePreviewUrl(objectUrl);
     return () => URL.revokeObjectURL(objectUrl);
   }, [imageFile]);
+
+  useEffect(() => {
+    if (!poseImageFile) {
+      setPosePreviewUrl(null);
+      return;
+    }
+    const objectUrl = URL.createObjectURL(poseImageFile);
+    setPosePreviewUrl(objectUrl);
+    return () => URL.revokeObjectURL(objectUrl);
+  }, [poseImageFile]);
 
   useEffect(() => {
     const src = imageUrl.trim() || filePreviewUrl;
@@ -163,6 +176,14 @@ export default function Home() {
       }
       if (imageFile) {
         formData.append("imageFile", imageFile);
+      }
+      if (provider === "openrouter") {
+        if (poseImageUrl.trim()) {
+          formData.append("openrouterPoseImageUrl", poseImageUrl.trim());
+        }
+        if (poseImageFile) {
+          formData.append("openrouterPoseImageFile", poseImageFile);
+        }
       }
 
       const response = await fetch("/api/generate", {
@@ -298,41 +319,88 @@ export default function Home() {
               </div>
 
               {mode === "image" && (
-                <div className="row split">
-                  <div className="row">
-                    <label className="label" htmlFor="imageFile">
-                      Upload image
-                    </label>
-                    <input
-                      id="imageFile"
-                      type="file"
-                      className="file"
-                      accept="image/*"
-                      onChange={(event) =>
-                        setImageFile(event.target.files?.[0] || null)
-                      }
-                    />
+                <div className="imageInputs">
+                  <div className="imageGroup">
+                    <span className="groupTitle">Source image</span>
+                    <div className="row">
+                      <label className="label" htmlFor="imageFile">
+                        Upload image
+                      </label>
+                      <input
+                        id="imageFile"
+                        type="file"
+                        className="file"
+                        accept="image/*"
+                        onChange={(event) =>
+                          setImageFile(event.target.files?.[0] || null)
+                        }
+                      />
+                    </div>
+                    <div className="row">
+                      <label className="label" htmlFor="imageUrl">
+                        Or use an image URL
+                      </label>
+                      <input
+                        id="imageUrl"
+                        className="input"
+                        type="url"
+                        placeholder="https://example.com/source.jpg"
+                        value={imageUrl}
+                        onChange={(event) => setImageUrl(event.target.value)}
+                      />
+                    </div>
+                    <div className="preview">
+                      <span className="tag">source</span>
+                      <span>
+                        {imageFile?.name ||
+                          (imageUrl.trim() ? "URL provided" : "No image yet")}
+                      </span>
+                    </div>
                   </div>
-                  <div className="row">
-                    <label className="label" htmlFor="imageUrl">
-                      Or use an image URL
-                    </label>
-                    <input
-                      id="imageUrl"
-                      className="input"
-                      type="url"
-                      placeholder="https://example.com/source.jpg"
-                      value={imageUrl}
-                      onChange={(event) => setImageUrl(event.target.value)}
-                    />
-                  </div>
-                  <div className="preview">
-                    <span className="tag">source</span>
-                    <span>
-                      {imageFile?.name ||
-                        (imageUrl.trim() ? "URL provided" : "No image yet")}
-                    </span>
-                  </div>
+
+                  {provider === "openrouter" && (
+                    <div className="imageGroup">
+                      <span className="groupTitle">Pose reference</span>
+                      <div className="row">
+                        <label className="label" htmlFor="poseImageFile">
+                          Upload pose reference
+                        </label>
+                        <input
+                          id="poseImageFile"
+                          type="file"
+                          className="file"
+                          accept="image/*"
+                          onChange={(event) =>
+                            setPoseImageFile(event.target.files?.[0] || null)
+                          }
+                        />
+                      </div>
+                      <div className="row">
+                        <label className="label" htmlFor="poseImageUrl">
+                          Or use a pose image URL
+                        </label>
+                        <input
+                          id="poseImageUrl"
+                          className="input"
+                          type="url"
+                          placeholder="https://example.com/pose.jpg"
+                          value={poseImageUrl}
+                          onChange={(event) =>
+                            setPoseImageUrl(event.target.value)
+                          }
+                        />
+                      </div>
+                      <div className="preview">
+                        <span className="tag">pose</span>
+                        <span>
+                          {poseImageFile?.name ||
+                            (poseImageUrl.trim()
+                              ? "URL provided"
+                              : "No pose image yet")}
+                        </span>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -450,6 +518,8 @@ export default function Home() {
                     setPrompt("");
                     setImageUrl("");
                     setImageFile(null);
+                    setPoseImageUrl("");
+                    setPoseImageFile(null);
                     setResultImage(null);
                     setResultText(null);
                     setStatus("idle");

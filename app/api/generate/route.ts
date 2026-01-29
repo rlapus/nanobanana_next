@@ -154,11 +154,13 @@ export async function POST(request: Request) {
     let imageFile: File | null = null;
     let mode: Mode = "text";
   let model = DEFAULT_MODEL;
-    let provider: Provider = "openrouter";
+  let provider: Provider = "openrouter";
   let moderation: "auto" | "low" = "auto";
   let openrouterModel = "bytedance-seed/seedream-4.5";
   let openrouterAspectRatio = "";
   let openrouterImageSize = "";
+  let openrouterPoseImageUrl = "";
+  let openrouterPoseImageFile: File | null = null;
 
     if (contentType.includes("application/json")) {
       const body = (await request.json()) as {
@@ -171,6 +173,7 @@ export async function POST(request: Request) {
         openrouterModel?: string;
         openrouterAspectRatio?: string;
         openrouterImageSize?: string;
+        openrouterPoseImageUrl?: string;
       };
       prompt = body.prompt?.trim() ?? "";
       imageUrl = body.imageUrl?.trim() ?? "";
@@ -197,6 +200,9 @@ export async function POST(request: Request) {
       }
       if (typeof body.openrouterImageSize === "string") {
         openrouterImageSize = body.openrouterImageSize.trim();
+      }
+      if (typeof body.openrouterPoseImageUrl === "string") {
+        openrouterPoseImageUrl = body.openrouterPoseImageUrl.trim();
       }
     } else {
       const formData = await request.formData();
@@ -228,6 +234,13 @@ export async function POST(request: Request) {
       openrouterImageSize = String(
         formData.get("openrouterImageSize") || ""
       ).trim();
+      openrouterPoseImageUrl = String(
+        formData.get("openrouterPoseImageUrl") || ""
+      ).trim();
+      const poseFile = formData.get("openrouterPoseImageFile");
+      if (poseFile instanceof File && poseFile.size > 0) {
+        openrouterPoseImageFile = poseFile;
+      }
       const file = formData.get("imageFile");
       if (file instanceof File && file.size > 0) {
         imageFile = file;
@@ -370,7 +383,24 @@ export async function POST(request: Request) {
             { status: 400 }
           );
         }
+        const poseUrl = await toDataUrlFromImageInput(
+          openrouterPoseImageFile,
+          openrouterPoseImageUrl
+        );
+        const poseHint = poseUrl
+          ? "Image 1 is the source identity and appearance. Image 2 is the pose reference only. Preserve the face from image 1. Use pose, body position, and camera angle from image 2. Do not copy the style from image 2."
+          : "";
+        if (poseHint) {
+          content[0] = {
+            type: "text",
+            text: `${prompt}\n\n${poseHint}`.trim(),
+          };
+        }
         content.push({ type: "image_url", image_url: { url: dataUrl } });
+
+        if (poseUrl) {
+          content.push({ type: "image_url", image_url: { url: poseUrl } });
+        }
       }
 
       const selectedModel =

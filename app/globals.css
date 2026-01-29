@@ -175,6 +175,29 @@ pre {
   align-items: end;
 }
 
+.imageInputs {
+  display: grid;
+  gap: 18px;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  align-items: start;
+}
+
+.imageGroup {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border-radius: 16px;
+  border: 1px dashed rgba(29, 23, 18, 0.2);
+  background: rgba(255, 255, 255, 0.9);
+}
+
+.groupTitle {
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.2em;
+  color: var(--muted);
+}
+
 .label {
   font-size: 0.9rem;
   text-transform: uppercase;
@@ -413,6 +436,11 @@ pre {
   color: var(--muted);
 }
 
+.preview span:last-child {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
 .tag {
   padding: 4px 10px;
   border-radius: 999px;
@@ -496,6 +524,11 @@ pre {
 
 [data-theme="dark"] .compareFrame {
   background: #0f151a;
+  border-color: rgba(241, 236, 228, 0.18);
+}
+
+[data-theme="dark"] .imageGroup {
+  background: rgba(15, 21, 26, 0.85);
   border-color: rgba(241, 236, 228, 0.18);
 }
 
